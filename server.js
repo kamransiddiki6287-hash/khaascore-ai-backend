@@ -11,15 +11,16 @@ app.use(express.json({ limit: '50mb' }));
 app.get('/', (req, res) => {
   res.send('KhaasCore AI Backend is Live and Running!');
 });
+
 // 3D एनिमेटेड सीन विजुअल एंडपॉइंट (Pollinations Engine)
 app.post('/api/generate-scene', async (req, res) => {
   try {
     const { prompt, isVertical = true } = req.body;
     const width = isVertical ? 720 : 1280;
     const height = isVertical ? 1280 : 720;
-    
-    const enhancedPrompt = encodeURIComponent(`${prompt} 3d render cinematic lighting pixar style unreal engine 5 masterpiece 8k vivid colors`);
-    const sceneUrl = `https://image.pollinations.ai/prompt/${enhancedPrompt}?width=${width}&height=${height}&nologo=true&seed=${Math.floor(Math.random() * 100000)}`;
+
+    const enhancedPrompt = encodeURIComponent(`${prompt} 3d render cinematic lighting pixar style unreal engine 5 master`);
+    const sceneUrl = `https://image.pollinations.ai/prompt/${enhancedPrompt}?width=${width}&height=${height}&nologo=true`;
 
     res.json({ success: true, sceneUrl });
   } catch (err) {
@@ -28,7 +29,7 @@ app.post('/api/generate-scene', async (req, res) => {
   }
 });
 
-// मुख्य AI चैट एंडपॉइंट (/api/chat)
+// मुख्य चैट एंडपॉइंट (/api/chat)
 app.post('/api/chat', async (req, res) => {
   try {
     const { modelName = 'gemini-2.5-flash', contents, systemInstruction, generationConfig } = req.body;
