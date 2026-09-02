@@ -7,41 +7,41 @@ import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 
-// सिक्योरिटी कॉन्फ़िगरेशन
+// 1. एंटरप्राइज सिक्योरिटी लेयर्स
 app.use(helmet());
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
 
-// स्पैम और डीडॉस सुरक्षा
+// 2. ऑटोमैटिक थ्रॉटलिंग और स्पैम प्रोटेक्शन
 const apiLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 60,
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'सुरक्षा सीमा पार: कृपया 10 मिनट बाद प्रयास करें।' }
+  message: { error: 'सुरक्षा सीमा पार: कृपया 15 मिनट बाद पुनः प्रयास करें।' }
 });
 app.use('/api/', apiLimiter);
 
-// कोर क्लाइंट्स
+// 3. क्लाइंट्स कॉन्फ़िगरेशन
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 const genAI = new GoogleGenerativeAI(process.env.MASTER_KEY);
 
-// ऑथेंटिकेशन और क्रेडिट गार्ड
+// 4. ऑथेंटिकेशन और क्रेडिट वेरिफिकेशन गार्ड
 async function verifyUserAccess(req, res, next) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'अनधिकृत: कृपया पहले लॉगिन करें।' });
+      return res.status(401).json({ error: 'अनधिकृत: कृपया पहले अपने अकाउंट से लॉगिन करें।' });
     }
 
     const token = authHeader.split(' ')[1];
     const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
 
     if (userErr || !user) {
-      return res.status(401).json({ error: 'अमान्य सेशन। कृपया पुनः लॉगिन करें।' });
+      return res.status(401).json({ error: 'अमान्य सेशन टोकन। कृपया पुनः लॉगिन करें।' });
     }
 
     const { data: profile, error: profErr } = await supabase
@@ -57,7 +57,7 @@ async function verifyUserAccess(req, res, next) {
     if (profile.credits <= 0) {
       return res.status(403).json({
         outOfCredits: true,
-        error: 'क्रेडिट समाप्त! असीमित एक्सेस के लिए अपना प्लान अपग्रेड करें।'
+        error: 'आपके क्रेडिट समाप्त हो चुके हैं! असीमित जनरेशन के लिए प्लान अपग्रेड करें।'
       });
     }
 
@@ -69,46 +69,51 @@ async function verifyUserAccess(req, res, next) {
   }
 }
 
-// AI हब कॉन्फ़िगरेशन (स्पेशलाइज्ड पर्सोना और पैरामीटर्स)
+// 5. स्पेशलाइज्ड AI टूल्स इंजन
 const AI_HUB_CONFIG = {
   viral_scripts: {
-    systemInstruction: "You are an elite YouTube Shorts and Instagram Reels strategist. Create high-retention scripts containing: 1. A psychology-based hook (0-3s), 2. Fast-paced body with visual directions in brackets, 3. Strong call to action. Keep language natural, punchy, and cinematic.",
+    systemInstruction: "You are an elite viral video director and retention engineer for YouTube Shorts and Instagram Reels. Structure every script into: 1. Hook (0-3s, pattern interrupt), 2. Story Body (Visual actions in brackets [ ], dynamic pacing), 3. Emotional Punchline, 4. Strategic CTA. Write in high-energy, relatable language.",
     temperature: 0.85,
     maxTokens: 2500
   },
   shayari_creative: {
-    systemInstruction: "You are a celebrated modern Urdu and Hindi poet. Compose original, deeply moving, and rhythmically coherent shayari/couplets. Maintain elegance, rich vocabulary, and profound metaphoric depth.",
+    systemInstruction: "You are a legendary Urdu and Hindi poet and lyricist. Craft original, deeply emotional, rhythmically flawless couplets and poetry with classical depth, modern relatability, and rich metaphoric texture.",
     temperature: 0.9,
     maxTokens: 1500
   },
   business_copy: {
-    systemInstruction: "You are a high-level SaaS copywriter and brand marketer. Deliver conversion-focused headlines, ad copy, value propositions, and landing page frameworks using direct, persuasive language.",
+    systemInstruction: "You are a high-conversion direct-response SaaS copywriter. Create razor-sharp value propositions, ad hooks, landing page wireframe text, and marketing emails designed to convert visitors into paid customers.",
     temperature: 0.6,
     maxTokens: 2000
   },
   code_engineer: {
-    systemInstruction: "You are a Principal Software Architect. Provide clean, robust, modern, and production-grade code solutions with zero fluff. Explain architecture concisely and write error-free code blocks.",
-    temperature: 0.3,
+    systemInstruction: "You are a Principal Software Architect. Provide production-ready, highly optimized, secure, and bug-free code solutions. Include brief architectural context and modular examples.",
+    temperature: 0.2,
     maxTokens: 3000
   },
   content_rewriter: {
-    systemInstruction: "You are a professional content editor. Rewrite, polish, and humanize the provided text to eliminate robotic patterns, improve flow, and make it engaging and crystal-clear.",
+    systemInstruction: "You are an expert humanizer and editorial proofreader. Eliminate AI robotic phrasing, enhance flow, improve readability, and deliver authentic, engaging writing.",
     temperature: 0.7,
     maxTokens: 2048
   },
+  prompt_enhancer: {
+    systemInstruction: "You are a master Prompt Engineer. Take a raw user request and convert it into an ultra-detailed, high-converting professional prompt with constraints, context, and role definitions.",
+    temperature: 0.5,
+    maxTokens: 1000
+  },
   general: {
-    systemInstruction: "You are Khaascore AI, a state-of-the-art multi-modal intelligence hub. Provide highly accurate, beautifully formatted, and structured responses.",
+    systemInstruction: "You are Khaascore AI, a premier multi-modal intelligent assistant. Provide clear, structured, accurate, and deeply insightful responses.",
     temperature: 0.7,
     maxTokens: 2048
   }
 };
 
-// 1. मल्टी-AI हब जनरेशन रूट
+// 6. मुख्य AI जनरेशन एंडपॉइंट
 app.post('/api/generate', verifyUserAccess, async (req, res) => {
   const { prompt, tool = 'general' } = req.body;
 
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-    return res.status(400).json({ error: 'कृपया प्रॉम्प्ट टेक्स्ट प्रदान करें।' });
+    return res.status(400).json({ error: 'कृपया एक वैध प्रॉम्प्ट दर्ज करें।' });
   }
 
   const selectedTool = AI_HUB_CONFIG[tool] || AI_HUB_CONFIG.general;
@@ -126,63 +131,123 @@ app.post('/api/generate', verifyUserAccess, async (req, res) => {
     const result = await model.generateContent(prompt.trim());
     const generatedText = result.response.text();
 
-    // क्रेडिट डिडक्शन
+    // 1 क्रेडिट की सुरक्षित कटौती
     const remaining = req.userCredits - 1;
     await supabase
       .from('profiles')
       .update({ credits: remaining })
       .eq('id', req.user.id);
 
-    // हिस्ट्री लॉगिंग
-    await supabase.from('generations').insert({
-      user_id: req.user.id,
-      prompt: prompt.trim(),
-      response: generatedText,
-      category: tool
-    });
+    // जनरेशन हिस्ट्री को डेटाबेस में सेव करना
+    const { data: savedRecord } = await supabase
+      .from('generations')
+      .insert({
+        user_id: req.user.id,
+        prompt: prompt.trim(),
+        response: generatedText,
+        category: tool
+      })
+      .select('id')
+      .single();
 
     return res.status(200).json({
       success: true,
+      generationId: savedRecord?.id || null,
       output: generatedText,
       creditsRemaining: remaining,
       toolUsed: tool
     });
   } catch (error) {
-    console.error('Hub Engine Error:', error);
-    return res.status(500).json({ error: 'AI प्रोसेसिंग विफल रही। आपका कोई क्रेडिट नहीं काटा गया है।' });
+    console.error('Generation Error:', error);
+    return res.status(500).json({ error: 'AI इंजन से संपर्क विफल रहा। आपका कोई क्रेडिट नहीं काटा गया।' });
   }
 });
 
-// 2. यूजर हब डैशबोर्ड डेटा (क्रेडिट्स और रीसेंट टूल्स हिस्ट्री)
-app.get('/api/user/hub-data', verifyUserAccess, async (req, res) => {
+// 7. प्रॉम्प्ट एन्हांसर एंडपॉइंट (बिना क्रेडिट काटे प्रॉम्प्ट को सुपरचार्ज करना)
+app.post('/api/enhance-prompt', verifyUserAccess, async (req, res) => {
+  const { rawPrompt } = req.body;
+  if (!rawPrompt?.trim()) return res.status(400).json({ error: 'प्रॉम्प्ट आवश्यक है' });
+
+  try {
+    const model = genAI.getGenerativeModel({
+      model: 'gemini-1.5-flash',
+      systemInstruction: AI_HUB_CONFIG.prompt_enhancer.systemInstruction
+    });
+
+    const result = await model.generateContent(`Optimize this raw prompt for best AI response: "${rawPrompt.trim()}"`);
+    return res.json({ enhancedPrompt: result.response.text().trim() });
+  } catch (err) {
+    return res.status(500).json({ error: 'प्रॉम्प्ट ऑप्टिमाइज़ करने में विफलता' });
+  }
+});
+
+// 8. यूजर डैशबोर्ड, हिस्ट्री व क्रेडिट्स फेच
+app.get('/api/user/dashboard', verifyUserAccess, async (req, res) => {
   try {
     const { data: history } = await supabase
       .from('generations')
       .select('id, prompt, response, category, is_favorite, created_at')
       .eq('user_id', req.user.id)
       .order('created_at', { ascending: false })
-      .limit(15);
+      .limit(30);
 
     return res.json({
       user: {
+        id: req.user.id,
         email: req.user.email,
         credits: req.userCredits
       },
-      history: history || []
+      generations: history || []
     });
   } catch (err) {
-    return res.status(500).json({ error: 'डैशबोर्ड डेटा लोड नहीं हो सका।' });
+    return res.status(500).json({ error: 'डैशबोर्ड डेटा लोड करने में असमर्थ।' });
   }
 });
 
-// 3. हेल्थ चेक
+// 9. फेवरेट/बुकमार्क टॉगल एंडपॉइंट
+app.patch('/api/generations/:id/favorite', verifyUserAccess, async (req, res) => {
+  const { id } = req.params;
+  const { is_favorite } = req.body;
+
+  try {
+    await supabase
+      .from('generations')
+      .update({ is_favorite: Boolean(is_favorite) })
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    return res.json({ success: true });
+  } catch (err) {
+    return res.status(500).json({ error: 'बुकमार्क स्टेटस अपडेट विफल' });
+  }
+});
+
+// 10. हिस्ट्री आइटम डिलीट एंडपॉइंट
+app.delete('/api/generations/:id', verifyUserAccess, async (req, res) => {
+  const { id } = req.params;
+
+  try {
+    await supabase
+      .from('generations')
+      .delete()
+      .eq('id', id)
+      .eq('user_id', req.user.id);
+
+    return res.json({ success: true, message: 'रिकॉर्ड हटा दिया गया' });
+  } catch (err) {
+    return res.status(500).json({ error: 'रिकॉर्ड डिलीट करने में विफलता' });
+  }
+});
+
+// 11. हेल्थ व स्टेटस चेक
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
-    platform: 'Khaascore AI Enterprise Hub',
-    version: '2.0.0'
+    engine: 'Khaascore Ultra SaaS Core Engine',
+    version: '3.0.0',
+    capabilities: ['viral_scripts', 'shayari', 'copywriting', 'coding', 'rewriting', 'prompt_enhancing']
   });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Khaascore AI Hub is live on port ${PORT}`));
+app.listen(PORT, () => console.log(`Khaascore AI Ultra Server running on port ${PORT}`));
