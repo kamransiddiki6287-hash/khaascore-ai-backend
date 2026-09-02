@@ -2,32 +2,39 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
+import Razorpay from 'razorpay';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { createClient } from '@supabase/supabase-js';
 
 const app = express();
 
-// 1. एंटरप्राइज सिक्योरिटी हेडर्स
+// 1. एंटरप्राइज सिक्योरिटी
 app.use(helmet());
 app.use(cors({ origin: '*' }));
 app.use(express.json({ limit: '1mb' }));
 
-// 2. ऑटोमैटिक थ्रॉटलिंग और स्पैम प्रोटेक्शन
+// 2. ऑटोमैटिक थ्रॉटलिंग व सुरक्षा
 const apiLimiter = rateLimit({
-  windowMs: 10 * 60 * 1000,
-  max: 60,
+  windowMs: 15 * 60 * 1000,
+  max: 120,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'बहुत सारे अनुरोध! सुरक्षा कारणों से 10 मिनट के लिए सिस्टम लॉक किया गया है।' }
+  message: { error: 'अनुरोध सीमा पार। सुरक्षा कारणों से 15 मिनट बाद पुनः प्रयास करें।' }
 });
 app.use('/api/', apiLimiter);
 
-// 3. कोर क्लाइंट्स
+// 3. कोर क्लाइंट्स इनिशियलाइजेशन
 const supabase = createClient(
   process.env.SUPABASE_URL,
   process.env.SUPABASE_SERVICE_KEY
 );
 const genAI = new GoogleGenerativeAI(process.env.MASTER_KEY);
+
+const razorpay = new Razorpay({
+  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholder',
+  key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret_placeholder'
+});
 
 // 4. ऑथेंटिकेशन और क्रेडिट वेरिफिकेशन गार्ड
 async function verifyUserAccess(req, res, next) {
@@ -41,7 +48,7 @@ async function verifyUserAccess(req, res, next) {
     const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
 
     if (userErr || !user) {
-      return res.status(401).json({ error: 'अमान्य सेशन टोकन। कृपया पुनः लॉगिन करें।' });
+      return res.status(401).json({ error: 'सत्र समाप्त हो चुका है। कृपया दोबारा लॉगिन करें।' });
     }
 
     const { data: profile, error: profErr } = await supabase
@@ -57,7 +64,7 @@ async function verifyUserAccess(req, res, next) {
     if (profile.credits <= 0) {
       return res.status(403).json({
         outOfCredits: true,
-        error: 'आपके सभी फ्री क्रेडिट समाप्त हो चुके हैं! असीमित जनरेशन के लिए प्लान अपग्रेड करें।'
+        error: 'क्रेडिट समाप्त! असीमित जनरेशन के लिए प्लान अपग्रेड करें।'
       });
     }
 
@@ -65,46 +72,46 @@ async function verifyUserAccess(req, res, next) {
     req.userCredits = profile.credits;
     next();
   } catch (err) {
-    return res.status(500).json({ error: 'इंटरनल ऑथेंटिकेशन विफलता: ' + err.message });
+    return res.status(500).json({ error: 'सुरक्षा प्रमाणीकरण त्रुटि: ' + err.message });
   }
 }
 
-// 5. अल्ट्रा-एडवांस्ड स्पेशलाइज्ड AI टूल्स इंजन
+// 5. स्पेशलाइज्ड AI टूल्स इंजन
 const AI_HUB_CONFIG = {
   viral_scripts: {
-    systemInstruction: "You are an elite viral video director and retention engineer for YouTube Shorts and Instagram Reels. Structure every script into: 1. Catchy Hook (0-3s, pattern interrupt), 2. Story Body (Visual actions in brackets [ ], dynamic pacing), 3. Emotional Punchline, 4. Strategic CTA. Write in high-energy, relatable language.",
+    systemInstruction: "You are an elite YouTube Shorts & Reels director. Deliver high-retention viral scripts with visual directions in brackets [ ], dynamic pacing, and psychological hooks (0-3s).",
     temperature: 0.85,
     maxTokens: 2500
   },
   shayari_creative: {
-    systemInstruction: "You are a legendary Urdu and Hindi poet and lyricist. Craft original, deeply emotional, rhythmically flawless couplets and poetry with classical depth, modern relatability, and rich metaphoric texture.",
+    systemInstruction: "You are a celebrated modern Urdu and Hindi poet. Compose deeply moving, rhythmically flawless, and authentic couplets/shayari with rich metaphoric depth.",
     temperature: 0.9,
     maxTokens: 1500
   },
   business_copy: {
-    systemInstruction: "You are a high-conversion direct-response SaaS copywriter. Create razor-sharp value propositions, ad hooks, landing page wireframe text, and marketing emails designed to convert visitors into paid customers.",
+    systemInstruction: "You are a direct-response SaaS copywriter. Create high-conversion value propositions, landing page text, and marketing copy that turns readers into buyers.",
     temperature: 0.6,
     maxTokens: 2000
   },
   code_engineer: {
-    systemInstruction: "You are a Principal Software Architect. Provide production-ready, highly optimized, secure, and bug-free code solutions. Include brief architectural context and modular examples.",
+    systemInstruction: "You are a Principal Software Architect. Provide production-ready, clean, secure, and well-structured code with zero unnecessary fluff.",
     temperature: 0.2,
     maxTokens: 3000
   },
   content_rewriter: {
-    systemInstruction: "You are an expert humanizer and editorial proofreader. Eliminate AI robotic phrasing, enhance flow, improve readability, and deliver authentic, engaging writing.",
+    systemInstruction: "You are an editorial humanizer. Rewrite and polish content to remove robotic AI patterns and elevate readability to executive standards.",
     temperature: 0.7,
     maxTokens: 2048
   },
   general: {
-    systemInstruction: "You are Khaascore AI, a premier multi-modal intelligent assistant. Provide clear, structured, accurate, and deeply insightful responses.",
+    systemInstruction: "You are Khaascore AI, a state-of-the-art multi-modal intelligence hub. Provide accurate, clear, and perfectly formatted answers.",
     temperature: 0.7,
     maxTokens: 2048
   }
 };
 
-// 6. मुख्य AI जनरेशन एंडपॉइंट (टोन और लेंथ सपोर्ट के साथ)
-app.post('/api/generate', verifyUserAccess, async (req, res) => {
+// 6. लाइव स्ट्रीमिंग AI जनरेशन रूट (ChatGPT जैसा Typewriter Effect)
+app.post('/api/generate/stream', verifyUserAccess, async (req, res) => {
   const { prompt, tool = 'general', tone = 'balanced', length = 'medium' } = req.body;
 
   if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
@@ -112,9 +119,12 @@ app.post('/api/generate', verifyUserAccess, async (req, res) => {
   }
 
   const selectedTool = AI_HUB_CONFIG[tool] || AI_HUB_CONFIG.general;
+  const context = `[Context -> Tone: ${tone}, Length: ${length}]. User Request: ${prompt.trim()}`;
 
-  // टोन और लेंथ के मुताबिक अतिरिक्त निर्देश
-  const customContext = `[Context Settings -> Tone: ${tone}, Target Length: ${length}]. User Query: `;
+  // SSE (Server-Sent Events) हेडर्स
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
 
   try {
     const model = genAI.getGenerativeModel({
@@ -126,8 +136,14 @@ app.post('/api/generate', verifyUserAccess, async (req, res) => {
       }
     });
 
-    const result = await model.generateContent(customContext + prompt.trim());
-    const generatedText = result.response.text();
+    const streamResult = await model.generateContentStream(context);
+    let fullOutput = '';
+
+    for await (const chunk of streamResult.stream) {
+      const chunkText = chunk.text();
+      fullOutput += chunkText;
+      res.write(`data: ${JSON.stringify({ chunk: chunkText })}\n\n`);
+    }
 
     // क्रेडिट डिडक्शन
     const remaining = req.userCredits - 1;
@@ -136,32 +152,33 @@ app.post('/api/generate', verifyUserAccess, async (req, res) => {
       .update({ credits: remaining })
       .eq('id', req.user.id);
 
-    // जनरेशन हिस्ट्री सेव करना
+    // हिस्ट्री सेव करना
     const { data: savedRecord } = await supabase
       .from('generations')
       .insert({
         user_id: req.user.id,
         prompt: prompt.trim(),
-        response: generatedText,
+        response: fullOutput,
         category: tool
       })
       .select('id')
       .single();
 
-    return res.status(200).json({
-      success: true,
-      generationId: savedRecord?.id || null,
-      output: generatedText,
-      creditsRemaining: remaining,
-      toolUsed: tool
-    });
+    res.write(`data: ${JSON.stringify({ 
+      done: true, 
+      creditsRemaining: remaining, 
+      generationId: savedRecord?.id || null 
+    })}\n\n`);
+    res.end();
+
   } catch (error) {
-    console.error('Generation Error:', error);
-    return res.status(500).json({ error: 'AI इंजन से संपर्क विफल रहा। आपका कोई क्रेडिट नहीं काटा गया।' });
+    console.error('Streaming Error:', error);
+    res.write(`data: ${JSON.stringify({ error: 'जनरेशन के दौरान त्रुटि आई।' })}\n\n`);
+    res.end();
   }
 });
 
-// 7. प्रॉम्प्ट एन्हांसर एंडपॉइंट (मुफ़्त में प्रॉम्प्ट को 10x बेहतर बनाएँ)
+// 7. प्रॉम्प्ट एन्हांसर
 app.post('/api/enhance-prompt', verifyUserAccess, async (req, res) => {
   const { rawPrompt } = req.body;
   if (!rawPrompt?.trim()) return res.status(400).json({ error: 'प्रॉम्प्ट खाली नहीं हो सकता' });
@@ -169,17 +186,78 @@ app.post('/api/enhance-prompt', verifyUserAccess, async (req, res) => {
   try {
     const model = genAI.getGenerativeModel({
       model: 'gemini-1.5-flash',
-      systemInstruction: "You are a master Prompt Optimizer. Transform weak user input into an ultra-detailed, professional, high-output prompt with rich context and constraints. Return ONLY the enhanced prompt."
+      systemInstruction: "You are a master Prompt Optimizer. Transform weak user input into an ultra-detailed, professional prompt. Return ONLY the enhanced prompt."
     });
 
-    const result = await model.generateContent(`Supercharge this prompt: "${rawPrompt.trim()}"`);
+    const result = await model.generateContent(`Optimize this prompt: "${rawPrompt.trim()}"`);
     return res.json({ enhancedPrompt: result.response.text().trim() });
   } catch (err) {
     return res.status(500).json({ error: 'प्रॉम्प्ट ऑप्टिमाइज़ेशन विफल' });
   }
 });
 
-// 8. यूजर डैशबोर्ड, हिस्ट्री व क्रेडिट्स
+// 8. पेमेंट ऑर्डर क्रिएटर (Razorpay)
+app.post('/api/payments/create-order', verifyUserAccess, async (req, res) => {
+  const { pack } = req.body; // 'starter' = ₹99 (100 क्रेडिट), 'pro' = ₹299 (500 क्रेडिट)
+  
+  const packages = {
+    starter: { amount: 9900, credits: 100 },
+    pro: { amount: 29900, credits: 500 }
+  };
+
+  const selectedPack = packages[pack] || packages.starter;
+
+  try {
+    const order = await razorpay.orders.create({
+      amount: selectedPack.amount,
+      currency: 'INR',
+      receipt: `rec_${Date.now().toString().slice(-8)}`,
+      notes: { userId: req.user.id, credits: selectedPack.credits }
+    });
+
+    await supabase.from('payments').insert({
+      user_id: req.user.id,
+      order_id: order.id,
+      amount: selectedPack.amount / 100,
+      credits_added: selectedPack.credits,
+      status: 'created'
+    });
+
+    return res.json({ orderId: order.id, amount: order.amount, currency: order.currency });
+  } catch (err) {
+    return res.status(500).json({ error: 'ऑर्डर तैयार करने में विफलता' });
+  }
+});
+
+// 9. पेमेंट वेरिफिकेशन व ऑटो-क्रेडिट टॉप-अप
+app.post('/api/payments/verify', verifyUserAccess, async (req, res) => {
+  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, pack } = req.body;
+
+  const body = razorpay_order_id + "|" + razorpay_payment_id;
+  const expectedSignature = crypto
+    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
+    .update(body.toString())
+    .digest('hex');
+
+  if (expectedSignature !== razorpay_signature) {
+    return res.status(400).json({ error: 'अमान्य पेमेंट हस्ताक्षर।' });
+  }
+
+  const creditsToAdd = pack === 'pro' ? 500 : 100;
+
+  // क्रेडिट्स जोड़ें
+  const newBalance = req.userCredits + creditsToAdd;
+  await supabase.from('profiles').update({ credits: newBalance }).eq('id', req.user.id);
+  
+  await supabase.from('payments').update({
+    payment_id: razorpay_payment_id,
+    status: 'success'
+  }).eq('order_id', razorpay_order_id);
+
+  return res.json({ success: true, newCredits: newBalance });
+});
+
+// 10. यूजर हब डैशबोर्ड व एनालिटिक्स
 app.get('/api/user/dashboard', verifyUserAccess, async (req, res) => {
   try {
     const { data: history } = await supabase
@@ -198,11 +276,11 @@ app.get('/api/user/dashboard', verifyUserAccess, async (req, res) => {
       generations: history || []
     });
   } catch (err) {
-    return res.status(500).json({ error: 'डैशबोर्ड डेटा लोड करने में असमर्थ।' });
+    return res.status(500).json({ error: 'डैशबोर्ड डेटा लोड नहीं हो सका।' });
   }
 });
 
-// 9. फेवरेट/बुकमार्क टॉगल एंडपॉइंट
+// 11. फेवरेट टॉगल
 app.patch('/api/generations/:id/favorite', verifyUserAccess, async (req, res) => {
   const { id } = req.params;
   const { is_favorite } = req.body;
@@ -220,31 +298,29 @@ app.patch('/api/generations/:id/favorite', verifyUserAccess, async (req, res) =>
   }
 });
 
-// 10. हिस्ट्री डिलीट एंडपॉइंट
+// 12. हिस्ट्री डिलीट
 app.delete('/api/generations/:id', verifyUserAccess, async (req, res) => {
-  const { id } = req.params;
-
   try {
     await supabase
       .from('generations')
       .delete()
-      .eq('id', id)
+      .eq('id', req.params.id)
       .eq('user_id', req.user.id);
 
     return res.json({ success: true, message: 'रिकॉर्ड हटा दिया गया' });
   } catch (err) {
-    return res.status(500).json({ error: 'रिकॉर्ड डिलीट करने में विफलता' });
+    return res.status(500).json({ error: 'डिलीट विफल' });
   }
 });
 
-// 11. हेल्थ चेक
+// 13. हेल्थ चेक
 app.get('/', (req, res) => {
   res.json({
     status: 'online',
-    engine: 'Khaascore AI Enterprise Hub Core',
-    version: '3.0.0'
+    platform: 'Khaascore AI Enterprise Hub Core',
+    version: '3.5.0'
   });
 });
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Khaascore AI Ultra Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Khaascore AI Enterprise Hub Core running on port ${PORT}`));
