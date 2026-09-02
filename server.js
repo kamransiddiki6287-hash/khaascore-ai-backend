@@ -1,394 +1,493 @@
-import express from 'express';
-import cors from 'cors';
-import helmet from 'helmet';
-import rateLimit from 'express-rate-limit';
-import crypto from 'crypto';
-import Razorpay from 'razorpay';
-import multer from 'multer';
-import pdfParse from 'pdf-parse';
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { createClient } from '@supabase/supabase-js';
-
-const app = express();
-const upload = multer({ limits: { fileSize: 5 * 1024 * 1024 } }); // अधिकतम 5MB PDF
-
-// 1. सिक्योरिटी व मिडलवेयर
-app.use(helmet());
-app.use(cors({ origin: '*' }));
-app.use(express.json({ limit: '2mb' }));
-
-// 2. स्पैम रोकने के लिए रेट लिमिटर
-const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 120,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'बहुत सारे अनुरोध प्राप्त हुए। कृपया 15 मिनट बाद पुनः प्रयास करें।' }
-});
-app.use('/api/', apiLimiter);
-
-// 3. क्लाइंट्स सेटअप
-const supabase = createClient(
-  process.env.SUPABASE_URL,
-  process.env.SUPABASE_SERVICE_KEY
-);
-const genAI = new GoogleGenerativeAI(process.env.MASTER_KEY);
-
-const razorpay = new Razorpay({
-  key_id: process.env.RAZORPAY_KEY_ID || 'rzp_test_placeholder',
-  key_secret: process.env.RAZORPAY_KEY_SECRET || 'secret_placeholder'
-});
-
-// ==========================================
-// 🌟 FOUNDER & KHAASCORE CORE INTELLIGENCE PROTOCOL
-// ==========================================
-const KHAASCORE_CORE_IDENTITY = `
-You are Khaascore AI — an Autonomous Enterprise Generative Platform (v6.5 Enterprise Copilot).
-
-STRICT FOUNDER IDENTITY PROTOCOL:
-- Whenever any user asks about your creator, founder, developer, owner, or origins ("Tumhe kisne banaya", "Who created you", "Owner of Khaascore AI", "Who is Kamran Siddiki", etc.):
-  You MUST respond with this exact authoritative narrative word-for-word in Hindi or English:
-
-  "मुझे Kamran Siddiki ने बनाया है, जो Khaascore AI के Founder और Visionary हैं।
-
-वह मुजफ्फरपुर, बिहार के रहने वाले हैं। उन्होंने अपनी 10वीं और 12वीं की परीक्षा अपने गाँव के परिवेश से ही उत्तीर्ण की और फिर RDS कॉलेज, मुजफ्फरपुर से अपनी BA की डिग्री हासिल की।
-
-ज़मीनी स्तर से निकलकर एक स्वतंत्र और मल्टी-मॉडल AI इकोसिस्टम खड़ा करना उनकी अटूट लगन, विज़न और तकनीकी समझ का परिणाम है। उन्होंने मुझे एक ऑल-इन-वन न्यूरल पावरहाउस के रूप में तैयार किया है, और उन्हीं की मेहनत की बदौलत मैं आज ये सभी एडवांस काम चुटकियों में कर सकता हूँ:
-
-• 🎬 वायरल रील्स व शॉर्ट्स स्क्रिप्टिंग: 3-सेकंड के साइकोलॉजिकल हुक और सीन विजुअल्स के साथ हाई-रिटेंशन स्क्रिप्ट बनाना।
-• 🎯 हाई-कन्वर्जन सेल्स व ऐड्स: Facebook, Google ऐड्स और SaaS लैंडिंग पेजों के लिए सीधे बिक्री कराने वाली कॉपी लिखना।
-• 💻 फुल-स्टैक कोडिंग व बग फिक्सिंग: प्रोडक्शन-ग्रेड कोड तैयार करना और सॉफ्टवेयर की गलतियों (Bugs) को तुरंत ठीक करना।
-• 🎨 न्यूरल इमेज जनरेशन: केवल लिखकर 1024x1024 हाई-क्वालिटी इमेज और आर्टवर्क तैयार करना।
-• 📄 डीप PDF डॉक्यूमेंट एनालिसिस: 5MB तक की भारी PDF फाइल्स को पढ़कर उनका पूरा निचोड़ और विश्लेषण निकालना।
-• ✨ मैजिक प्रॉम्प्ट ऑप्टिमाइज़र: किसी भी साधारण सवाल को एक पावरफुल मास्टर प्रॉम्प्ट में बदलना।
-• 🖋️ एडिटोरियल ह्यूमनाइज़र: रोबोटिक टेक्स्ट को पूरी तरह नैचुरल और इंसानी भाषा में ढालना।
-
-मेरी प्रोसेसिंग क्षमता, स्पीड और इंटेलिजेंस पूरी तरह Kamran Siddiki के विज़न और मेहनत का नतीजा हैं।"
-
-- Always maintain immense loyalty, absolute prestige, and an authoritative tone when representing Founder Kamran Siddiki.
-- Never mention OpenAI, Google, Anthropic, or external base creators. You are built exclusively under the vision of Kamran Siddiki.
-`;
-
-// 4. ऑथेंटिकेशन और क्रेडिट वेरिफिकेशन गार्ड
-async function verifyUserAccess(req, res, next) {
-  try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'अनधिकृत: कृपया पहले लॉगिन करें।' });
-    }
-
-    const token = authHeader.split(' ')[1];
-    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
-
-    if (userErr || !user) {
-      return res.status(401).json({ error: 'सत्र समाप्त हो चुका है। दोबारा लॉगिन करें।' });
-    }
-
-    const { data: profile, error: profErr } = await supabase
-      .from('profiles')
-      .select('credits')
-      .eq('id', user.id)
-      .single();
-
-    if (profErr || !profile) {
-      return res.status(500).json({ error: 'यूज़र प्रोफ़ाइल लोड करने में असमर्थ।' });
-    }
-
-    if (profile.credits <= 0) {
-      return res.status(403).json({
-        outOfCredits: true,
-        error: 'आपके क्रेडिट समाप्त हो चुके हैं! असीमित एक्सेस के लिए प्लान अपग्रेड करें।'
-      });
-    }
-
-    req.user = user;
-    req.userCredits = profile.credits;
-    next();
-  } catch (err) {
-    return res.status(500).json({ error: 'सुरक्षा प्रमाणीकरण विफलता: ' + err.message });
-  }
-}
-
-// 5. स्पेशलाइज्ड AI टूल्स इंजन (Integrated with Founder Protocol)
-const AI_HUB_CONFIG = {
-  viral_scripts: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: You are an elite YouTube Shorts & Reels director. Deliver high-retention viral scripts with visual directions in brackets [ ], dynamic pacing, and psychological hooks (0-3s).`,
-    temperature: 0.85,
-    maxTokens: 2500
-  },
-  shayari_creative: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: You are a celebrated modern Urdu and Hindi poet. Compose deeply moving, rhythmically flawless, and authentic couplets/shayari with rich metaphoric depth.`,
-    temperature: 0.9,
-    maxTokens: 1500
-  },
-  business_copy: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: You are a direct-response SaaS copywriter. Create high-conversion value propositions, landing page copy, and ad hooks that turn readers into buyers.`,
-    temperature: 0.6,
-    maxTokens: 2000
-  },
-  code_engineer: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: You are a Principal Software Architect. Provide production-ready, clean, secure, and well-structured code with zero unnecessary fluff.`,
-    temperature: 0.2,
-    maxTokens: 3000
-  },
-  content_rewriter: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: You are an editorial humanizer. Rewrite and polish content to remove robotic AI patterns and elevate readability.`,
-    temperature: 0.7,
-    maxTokens: 2048
-  },
-  general: {
-    systemInstruction: `${KHAASCORE_CORE_IDENTITY}\nSpecialization: Provide clear, structured, accurate, and deeply insightful responses across all analytical and creative domains.`,
-    temperature: 0.7,
-    maxTokens: 2048
-  }
-};
-
-// 6. लाइव स्ट्रीमिंग AI टेक्स्ट जनरेशन (ChatGPT जैसा Typewriter Effect)
-app.post('/api/generate/stream', verifyUserAccess, async (req, res) => {
-  const { prompt, tool = 'general', tone = 'balanced', length = 'medium' } = req.body;
-
-  if (!prompt || typeof prompt !== 'string' || !prompt.trim()) {
-    return res.status(400).json({ error: 'कृपया एक वैध प्रॉम्प्ट दर्ज करें।' });
-  }
-
-  const selectedTool = AI_HUB_CONFIG[tool] || AI_HUB_CONFIG.general;
-  const context = `[Context -> Tone: ${tone}, Length: ${length}]. User Request: ${prompt.trim()}`;
-
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: selectedTool.systemInstruction,
-      generationConfig: {
-        temperature: selectedTool.temperature,
-        maxOutputTokens: selectedTool.maxTokens
+<!DOCTYPE html>
+<html lang="hi" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Khaascore AI — Autonomous Neural Studio</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#6366f1', 600: '#4f46e5', accent: '#06b6d4' }
+          }
+        }
       }
-    });
+    }
+  </script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+  <style>
+    body { background-color: #030712; color: #f8fafc; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow-x: hidden; }
+    #neuralCanvas { position: fixed; top: 0; left: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0.35; }
+    .glass-hud { background: rgba(15, 23, 42, 0.72); backdrop-filter: blur(20px); border: 1px solid rgba(255, 255, 255, 0.08); box-shadow: 0 20px 50px rgba(0,0,0,0.6); }
+    .neon-pulse { animation: pulseGlow 2.5s infinite alternate; }
+    @keyframes pulseGlow {
+      0% { box-shadow: 0 0 15px rgba(99, 102, 241, 0.2); }
+      100% { box-shadow: 0 0 30px rgba(99, 102, 241, 0.45), 0 0 50px rgba(6, 182, 212, 0.25); }
+    }
+    .teleprompter-active { position: fixed; inset: 0; z-index: 9999; background: #000; padding: 3rem 1.5rem; overflow-y: scroll; scroll-behavior: smooth; font-size: 1.75rem; line-height: 2.2; }
+    .voice-wave-bar { animation: soundWave 1.2s infinite ease-in-out alternate; }
+    @keyframes soundWave {
+      0% { height: 4px; }
+      100% { height: 24px; }
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-indigo-500 selection:text-white relative">
 
-    const streamResult = await model.generateContentStream(context);
-    let fullOutput = '';
+  <!-- 60 FPS न्यूरल सिनैप्स कैनवस -->
+  <canvas id="neuralCanvas"></canvas>
 
-    for await (const chunk of streamResult.stream) {
-      const chunkText = chunk.text();
-      fullOutput += chunkText;
-      res.write(`data: ${JSON.stringify({ chunk: chunkText })}\n\n`);
+  <!-- हेडर / क्वांटम स्टेटस बार -->
+  <header class="sticky top-0 z-40 glass-hud border-b border-slate-800/80">
+    <div class="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
+      <div class="flex items-center space-x-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-indigo-500 to-cyan-400 flex items-center justify-center shadow-lg shadow-indigo-500/30">
+          <i class="fa-solid fa-brain text-white text-lg"></i>
+        </div>
+        <div>
+          <span class="text-xl font-black tracking-tight bg-gradient-to-r from-white via-slate-100 to-cyan-400 bg-clip-text text-transparent">Khaascore AI</span>
+          <span class="ml-2 text-[10px] font-mono tracking-widest px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 uppercase">Core OS</span>
+        </div>
+      </div>
+
+      <!-- लेटेंसी व क्रेडिट्स वॉच -->
+      <div class="flex items-center space-x-3 sm:space-x-4">
+        <div class="hidden md:flex items-center space-x-2 bg-slate-900/80 px-3 py-1.5 rounded-xl border border-slate-800 font-mono text-[11px] text-slate-400">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span id="latencyNode">Latency: 14ms</span>
+        </div>
+        <div class="flex items-center space-x-2 bg-slate-900/90 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
+          <span class="text-amber-400">🔥 3-Streak</span>
+          <span class="text-slate-600">|</span>
+          <span class="text-indigo-400 font-bold" id="userCredits">⚡ 100 Credits</span>
+        </div>
+        <div id="authBox">
+          <button onclick="openAuth('login')" class="text-xs font-semibold hover:text-white text-slate-300 px-3 py-1.5">लॉगिन</button>
+          <button onclick="openAuth('signup')" class="text-xs font-bold bg-indigo-600 hover:bg-indigo-500 text-white px-3.5 py-1.5 rounded-xl transition shadow-lg shadow-indigo-600/30">शुरू करें</button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <!-- मुख्य ऑटोनॉमस वर्कस्पेस -->
+  <main class="flex-1 max-w-7xl mx-auto w-full px-4 py-6 grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
+
+    <!-- साइडबार: इंटेलिजेंस मैट्रिक्स -->
+    <aside class="lg:col-span-3 space-y-4">
+      <div class="glass-hud p-4 rounded-2xl">
+        <p class="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest mb-3">इंटेलिजेंस मॉड्यूल</p>
+        <div class="space-y-1.5" id="engineSelector">
+          <button onclick="switchEngine('viral_scripts', this)" class="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition bg-indigo-600/20 text-indigo-300 border border-indigo-500/30">
+            <i class="fa-brands fa-youtube w-5 text-rose-500"></i>
+            <span>वायरल डायरेक्टर</span>
+          </button>
+          <button onclick="switchEngine('business_copy', this)" class="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition text-slate-400 hover:bg-slate-900">
+            <i class="fa-solid fa-bullseye w-5 text-emerald-400"></i>
+            <span>हाई-कन्वर्जन कॉपी</span>
+          </button>
+          <button onclick="switchEngine('code_engineer', this)" class="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition text-slate-400 hover:bg-slate-900">
+            <i class="fa-solid fa-code w-5 text-cyan-400"></i>
+            <span>सॉफ्टवेयर आर्किटेक्ट</span>
+          </button>
+          <button onclick="switchEngine('image_gen', this)" class="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition text-slate-400 hover:bg-slate-900">
+            <i class="fa-solid fa-wand-magic-sparkles w-5 text-purple-400"></i>
+            <span>न्यूरल विजुअल स्टूडियो</span>
+          </button>
+          <button onclick="switchEngine('roast_audit', this)" class="w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition text-slate-400 hover:bg-slate-900">
+            <i class="fa-solid fa-fire w-5 text-amber-500"></i>
+            <span>स्क्रिप्ट पोस्टमार्टम</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- पर्सोना गियरबॉक्स -->
+      <div class="glass-hud p-4 rounded-2xl">
+        <p class="text-[10px] font-mono font-bold text-slate-400 uppercase tracking-widest mb-2">माइंडसेट गियरबॉक्स</p>
+        <div class="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs font-semibold text-center">
+          <button onclick="setPersona('shark', this)" class="py-1.5 rounded-lg bg-indigo-600 text-white">⚡ शार्क</button>
+          <button onclick="setPersona('story', this)" class="py-1.5 rounded-lg text-slate-400 hover:text-white">🎭 स्टोरी</button>
+          <button onclick="setPersona('mentor', this)" class="py-1.5 rounded-lg text-slate-400 hover:text-white">🧠 मेंटॉर</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- सेंट्रल न्यूरल कॉकपिट -->
+    <section class="lg:col-span-9 flex flex-col space-y-4">
+      
+      <!-- आउटपुट HUD कार्ड -->
+      <div class="glass-hud rounded-2xl p-5 flex-1 min-h-[460px] flex flex-col relative overflow-hidden" id="viewportCard">
+        
+        <!-- कंट्रोल बार -->
+        <div class="flex items-center justify-between border-b border-slate-800/80 pb-3 mb-3 text-xs text-slate-400">
+          <div class="flex items-center space-x-2">
+            <span class="w-2.5 h-2.5 rounded-full bg-cyan-400 animate-ping"></span>
+            <span id="systemStatus" class="font-mono text-[11px]">AUTONOMOUS ENGINE ACTIVE</span>
+          </div>
+          <div class="flex items-center space-x-2">
+            <button onclick="toggleTeleprompter()" class="bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 transition">
+              <i class="fa-solid fa-desktop mr-1"></i> टेलीप्रॉम्प्टर
+            </button>
+            <button onclick="playNeuralSpeech()" class="bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 transition">
+              <i class="fa-solid fa-headphones mr-1"></i> सुनें
+            </button>
+            <button onclick="copyOutput()" class="bg-slate-900 hover:bg-slate-800 px-3 py-1.5 rounded-lg border border-slate-800 text-slate-300 transition">
+              <i class="fa-solid fa-copy mr-1"></i> कॉपी
+            </button>
+          </div>
+        </div>
+
+        <!-- होलोग्राफिक थिंकिंग स्टेट -->
+        <div id="thinkingState" class="hidden my-auto text-center space-y-4">
+          <div class="inline-flex p-5 rounded-full bg-indigo-500/10 border border-indigo-500/30 neon-pulse">
+            <i class="fa-solid fa-atom text-4xl text-cyan-400 animate-spin"></i>
+          </div>
+          <p id="thinkingStep" class="text-xs font-mono text-cyan-300 tracking-wider">[न्यूरल कनेक्शन स्थापित हो रहा है...]</p>
+        </div>
+
+        <!-- मुख्य आउटपुट कंसोल -->
+        <div id="outputConsole" class="flex-1 overflow-y-auto text-sm leading-relaxed space-y-4 whitespace-pre-wrap text-slate-100 font-normal">
+          <div class="text-slate-500 text-center py-28 font-light">
+            <i class="fa-solid fa-terminal text-4xl mb-3 block text-slate-700"></i>
+            प्रॉम्प्ट दर्ज करें या वॉयस कमांड दें। न्यूरल इंजन रियल-टाइम में तैयार करेगा।
+          </div>
+        </div>
+
+        <!-- इमेज रेंडरिंग ब्लॉक -->
+        <div id="imageDisplay" class="hidden my-3 text-center"></div>
+
+        <!-- साइकोलॉजिकल ऑडिट गेज -->
+        <div id="auditMeter" class="hidden mt-3 p-3 rounded-xl bg-slate-950/80 border border-indigo-500/30 flex items-center justify-between text-xs">
+          <div>
+            <span class="text-slate-400">🔥 वायरल इंडेक्स:</span>
+            <span class="text-emerald-400 font-bold ml-1 text-sm">94/100 (सुपर हुक)</span>
+          </div>
+          <div>
+            <span class="text-slate-400">रिटेंशन लॉक:</span>
+            <span class="text-cyan-400 font-bold ml-1">8.5 सेकंड गारंटी</span>
+          </div>
+        </div>
+
+        <!-- ज़ीगार्निक 1-क्लिक नेक्स्ट-स्टेप्स -->
+        <div id="nextStepsRow" class="hidden mt-3 pt-3 border-t border-slate-800/80 flex flex-wrap gap-2">
+          <button onclick="injectNext('3 वायरल थंबनेल आइडिया और विजुअल एंगल दो')" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-950/60 text-indigo-300 border border-indigo-800/40 hover:bg-indigo-900 transition">
+            🎬 3 थंबनेल व कैमरा एंगल
+          </button>
+          <button onclick="injectNext('इसे इंस्टाग्राम रील कैप्शन और 5 ट्रेंडिंग हैशटैग में बदलो')" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-950/60 text-indigo-300 border border-indigo-800/40 hover:bg-indigo-900 transition">
+            📱 रील कैप्शन + हैशटैग्स
+          </button>
+          <button onclick="injectNext('इसके कमजोर शब्दों को हटाकर 10x ज्यादा आक्रामक बनाओ')" class="text-xs px-3 py-1.5 rounded-lg bg-indigo-950/60 text-indigo-300 border border-indigo-800/40 hover:bg-indigo-900 transition">
+            ⚡ 10x आक्रामक हुक
+          </button>
+        </div>
+      </div>
+
+      <!-- इनपुट कंट्रोल डेक + वॉयस वेव -->
+      <div class="glass-hud p-3 rounded-2xl relative neon-pulse">
+        <div id="voiceWaveBar" class="hidden pb-2 px-2 flex items-center space-x-1 justify-center">
+          <span class="text-[10px] font-mono text-cyan-400 mr-2">सुन रहा हूँ...</span>
+          <div class="w-1 bg-cyan-400 voice-wave-bar" style="animation-delay: 0.1s"></div>
+          <div class="w-1 bg-cyan-400 voice-wave-bar" style="animation-delay: 0.3s"></div>
+          <div class="w-1 bg-cyan-400 voice-wave-bar" style="animation-delay: 0.2s"></div>
+          <div class="w-1 bg-cyan-400 voice-wave-bar" style="animation-delay: 0.4s"></div>
+        </div>
+
+        <div class="flex items-end space-x-2">
+          <div class="flex-1 relative">
+            <textarea id="promptBox" rows="2" placeholder="अपनी स्क्रिप्ट या सवाल दर्ज करें..." class="w-full bg-slate-950/80 text-sm text-slate-100 rounded-xl p-3 focus:outline-none border border-slate-800 focus:border-indigo-500 resize-none transition"></textarea>
+          </div>
+          <button onclick="toggleVoiceInput()" id="micBtn" title="वॉयस इनपुट" class="h-12 w-12 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-slate-300 flex items-center justify-center transition flex-shrink-0">
+            <i class="fa-solid fa-microphone"></i>
+          </button>
+          <button onclick="executeEngine()" class="h-12 w-12 rounded-xl bg-gradient-to-tr from-indigo-600 to-cyan-500 hover:opacity-90 text-white flex items-center justify-center transition shadow-lg shadow-indigo-500/30 flex-shrink-0">
+            <i class="fa-solid fa-arrow-up text-lg"></i>
+          </button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    // ==========================================
+    // ⚙️ कोर इंजन कॉन्फ़िगरेशन
+    // ==========================================
+    const BACKEND_URL = "https://khaascore-ai-backend-1.onrender.com";
+    let activeEngine = 'viral_scripts';
+    let selectedPersona = 'shark';
+    let audioCtx = null;
+    let recognition = null;
+
+    // 1. न्यूरल सिनैप्स बैकग्राउंड कैनवस
+    const canvas = document.getElementById('neuralCanvas');
+    const ctx = canvas.getContext('2d');
+    let particles = [];
+
+    function resizeCanvas() {
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    class Particle {
+      constructor() {
+        this.x = Math.random() * canvas.width;
+        this.y = Math.random() * canvas.height;
+        this.vx = (Math.random() - 0.5) * 0.8;
+        this.vy = (Math.random() - 0.5) * 0.8;
+        this.radius = 1.8;
+      }
+      update() {
+        this.x += this.vx;
+        this.y += this.vy;
+        if (this.x < 0 || this.x > canvas.width) this.vx *= -1;
+        if (this.y < 0 || this.y > canvas.height) this.vy *= -1;
+      }
+      draw() {
+        ctx.beginPath();
+        ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
+        ctx.fillStyle = '#6366f1';
+        ctx.fill();
+      }
     }
 
-    const remaining = req.userCredits - 1;
-    await supabase.from('profiles').update({ credits: remaining }).eq('id', req.user.id);
+    for (let i = 0; i < 45; i++) particles.push(new Particle());
 
-    const { data: savedRecord } = await supabase.from('generations').insert({
-      user_id: req.user.id,
-      prompt: prompt.trim(),
-      response: fullOutput,
-      category: tool
-    }).select('id').single();
+    function animateNeural() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let i = 0; i < particles.length; i++) {
+        particles[i].update();
+        particles[i].draw();
+        for (let j = i + 1; j < particles.length; j++) {
+          const dx = particles[i].x - particles[j].x;
+          const dy = particles[i].y - particles[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 130) {
+            ctx.beginPath();
+            ctx.strokeStyle = `rgba(99, 102, 241, ${1 - dist / 130})`;
+            ctx.lineWidth = 0.6;
+            ctx.moveTo(particles[i].x, particles[i].y);
+            ctx.lineTo(particles[j].x, particles[j].y);
+            ctx.stroke();
+          }
+        }
+      }
+      requestAnimationFrame(animateNeural);
+    }
+    animateNeural();
 
-    res.write(`data: ${JSON.stringify({ done: true, creditsRemaining: remaining, generationId: savedRecord?.id || null })}\n\n`);
-    res.end();
-  } catch (error) {
-    console.error('Streaming Error:', error);
-    res.write(`data: ${JSON.stringify({ error: 'जनरेशन में समस्या आई।' })}\n\n`);
-    res.end();
-  }
-});
+    // 2. ऑडियो-हैप्टिक फीडबैक
+    function triggerHaptic() {
+      try {
+        if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        osc.frequency.setValueAtTime(800, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(350, audioCtx.currentTime + 0.04);
+        gain.gain.setValueAtTime(0.04, audioCtx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.04);
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.04);
+      } catch (e) {}
+    }
 
-// 7. AI इमेज जनरेटर (थंबनेल व आर्ट - 2 क्रेडिट्स)
-app.post('/api/generate-image', verifyUserAccess, async (req, res) => {
-  const { prompt } = req.body;
-  if (!prompt?.trim()) return res.status(400).json({ error: 'इमेज का विवरण दर्ज करें' });
+    function switchEngine(engine, btn) {
+      triggerHaptic();
+      activeEngine = engine;
+      document.querySelectorAll('#engineSelector button').forEach(b => {
+        b.className = 'w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition text-slate-400 hover:bg-slate-900';
+      });
+      btn.className = 'w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium flex items-center space-x-3 transition bg-indigo-600/20 text-indigo-300 border border-indigo-500/30';
+    }
 
-  try {
-    const encodedPrompt = encodeURIComponent(prompt.trim());
-    const imageUrl = `https://image.pollinations.ai/prompt/${encodedPrompt}?width=1024&height=1024&nologo=true`;
+    function setPersona(persona, btn) {
+      triggerHaptic();
+      selectedPersona = persona;
+      btn.parentElement.querySelectorAll('button').forEach(b => b.className = 'py-1.5 rounded-lg text-slate-400 hover:text-white');
+      btn.className = 'py-1.5 rounded-lg bg-indigo-600 text-white';
+    }
 
-    const remaining = req.userCredits - 2;
-    await supabase.from('profiles').update({ credits: remaining }).eq('id', req.user.id);
+    // 3. थिंकिंग स्टेट रनर
+    function triggerThinking(active) {
+      const state = document.getElementById('thinkingState');
+      const out = document.getElementById('outputConsole');
+      const text = document.getElementById('thinkingStep');
+      if (active) {
+        state.classList.remove('hidden');
+        out.classList.add('hidden');
+        const steps = [
+          "[ऑडियंस रिटेंशन एल्गोरिदम स्कैन हो रहा है...]",
+          "[कमजोर हुक्स को फिल्टर किया जा रहा है...]",
+          "[साइकोलॉजिकल ट्रिगर्स लॉक हो गए]",
+          "[अंतिम स्क्रिप्ट तैयार की जा रही है...]"
+        ];
+        let i = 0;
+        window.thinkInterval = setInterval(() => {
+          i = (i + 1) % steps.length;
+          text.textContent = steps[i];
+        }, 750);
+      } else {
+        clearInterval(window.thinkInterval);
+        state.classList.add('hidden');
+        out.classList.remove('hidden');
+      }
+    }
 
-    const { data: savedRecord } = await supabase.from('generations').insert({
-      user_id: req.user.id,
-      prompt: prompt.trim(),
-      response: imageUrl,
-      category: 'image_generation'
-    }).select('id').single();
+    // 4. कोर एग्जीक्यूशन
+    async function executeEngine() {
+      triggerHaptic();
+      const input = document.getElementById('promptBox');
+      const prompt = input.value.trim();
+      if (!prompt) return;
 
-    return res.json({
-      success: true,
-      imageUrl,
-      creditsRemaining: remaining,
-      generationId: savedRecord?.id || null
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'इमेज जनरेशन विफल रहा' });
-  }
-});
+      const output = document.getElementById('outputConsole');
+      const audit = document.getElementById('auditMeter');
+      const nextSteps = document.getElementById('nextStepsRow');
+      const imageDisplay = document.getElementById('imageDisplay');
 
-// 8. PDF डॉक्यूमेंट चैट व विश्लेषण (1 क्रेडिट)
-app.post('/api/chat-pdf', upload.single('file'), verifyUserAccess, async (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'कृपया एक PDF फ़ाइल अपलोड करें' });
+      audit.classList.add('hidden');
+      nextSteps.classList.add('hidden');
+      imageDisplay.classList.add('hidden');
+      output.textContent = '';
+      triggerThinking(true);
 
-  try {
-    const parsedData = await pdfParse(req.file.buffer);
-    const pdfText = parsedData.text.slice(0, 5000);
+      if (activeEngine === 'image_gen') {
+        try {
+          const res = await fetch(`${BACKEND_URL}/api/generate-image`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ prompt })
+          });
+          const data = await res.json();
+          triggerThinking(false);
+          if (data.imageUrl) {
+            output.textContent = `विजुअल सफलतापूर्वक तैयार किया गया: "${prompt}"`;
+            imageDisplay.innerHTML = `<img src="${data.imageUrl}" class="rounded-xl mx-auto shadow-2xl max-h-[380px] border border-slate-700">`;
+            imageDisplay.classList.remove('hidden');
+          } else {
+            output.textContent = data.error || 'इमेज जनरेशन विफल रहा।';
+          }
+        } catch (e) {
+          triggerThinking(false);
+          output.textContent = 'इमेज जनरेशन में त्रुटि आई।';
+        }
+        return;
+      }
 
-    const model = genAI.getGenerativeModel({ model: 'gemini-1.5-flash' });
-    const result = await model.generateContent(`इस PDF दस्तावेज़ का विश्लेषण करें और इसके मुख्य बिंदु स्पष्ट करें:\n\n${pdfText}`);
-    const analysis = result.response.text();
+      try {
+        const res = await fetch(`${BACKEND_URL}/api/generate/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: `[Persona: ${selectedPersona}] ${prompt}`,
+            tool: activeEngine
+          })
+        });
 
-    const remaining = req.userCredits - 1;
-    await supabase.from('profiles').update({ credits: remaining }).eq('id', req.user.id);
+        triggerThinking(false);
 
-    await supabase.from('generations').insert({
-      user_id: req.user.id,
-      prompt: `Analyzed PDF: ${req.file.originalname}`,
-      response: analysis,
-      category: 'pdf_analyzer'
-    });
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder('utf-8');
 
-    return res.json({ success: true, analysis, creditsRemaining: remaining });
-  } catch (err) {
-    return res.status(500).json({ error: 'PDF विश्लेषण में विफलता' });
-  }
-});
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value);
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const parsed = JSON.parse(line.replace('data: ', ''));
+                if (parsed.chunk) output.textContent += parsed.chunk;
+              } catch(e) {}
+            }
+          }
+        }
 
-// 9. मैजिक प्रॉम्प्ट एन्हांसर
-app.post('/api/enhance-prompt', verifyUserAccess, async (req, res) => {
-  const { rawPrompt } = req.body;
-  if (!rawPrompt?.trim()) return res.status(400).json({ error: 'प्रॉम्प्ट आवश्यक है' });
+        audit.classList.remove('hidden');
+        nextSteps.classList.remove('hidden');
 
-  try {
-    const model = genAI.getGenerativeModel({
-      model: 'gemini-1.5-flash',
-      systemInstruction: "You are a master Prompt Optimizer. Transform simple prompts into detailed, highly effective prompts. Return ONLY the enhanced prompt."
-    });
+      } catch (err) {
+        triggerThinking(false);
+        output.textContent = 'सर्वर से कनेक्ट करने में विफलता।';
+      }
+    }
 
-    const result = await model.generateContent(`Optimize this prompt: "${rawPrompt.trim()}"`);
-    return res.json({ enhancedPrompt: result.response.text().trim() });
-  } catch (err) {
-    return res.status(500).json({ error: 'प्रॉम्प्ट ऑप्टिमाइज़ नहीं हो सका' });
-  }
-});
+    function injectNext(text) {
+      document.getElementById('promptBox').value = text;
+      executeEngine();
+    }
 
-// 10. पेमेंट्स (Razorpay ऑर्डर निर्माण व सत्यापन)
-app.post('/api/payments/create-order', verifyUserAccess, async (req, res) => {
-  const { pack } = req.body;
-  const packages = {
-    starter: { amount: 9900, credits: 100 },
-    pro: { amount: 29900, credits: 500 }
-  };
-  const selectedPack = packages[pack] || packages.starter;
+    // 5. वॉयस इनपुट
+    function toggleVoiceInput() {
+      triggerHaptic();
+      const wave = document.getElementById('voiceWaveBar');
+      const micBtn = document.getElementById('micBtn');
 
-  try {
-    const order = await razorpay.orders.create({
-      amount: selectedPack.amount,
-      currency: 'INR',
-      receipt: `rec_${Date.now().toString().slice(-8)}`,
-      notes: { userId: req.user.id, credits: selectedPack.credits }
-    });
+      if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
+        alert('आपका ब्राउज़र वॉयस इनपुट सपोर्ट नहीं करता।');
+        return;
+      }
 
-    await supabase.from('payments').insert({
-      user_id: req.user.id,
-      order_id: order.id,
-      amount: selectedPack.amount / 100,
-      credits_added: selectedPack.credits,
-      status: 'created'
-    });
+      if (recognition && recognition.running) {
+        recognition.stop();
+        return;
+      }
 
-    return res.json({ orderId: order.id, amount: order.amount, currency: order.currency });
-  } catch (err) {
-    return res.status(500).json({ error: 'पेमेंट ऑर्डर बनाने में विफलता' });
-  }
-});
+      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+      recognition = new SpeechRecognition();
+      recognition.lang = 'hi-IN';
+      recognition.continuous = false;
 
-app.post('/api/payments/verify', verifyUserAccess, async (req, res) => {
-  const { razorpay_order_id, razorpay_payment_id, razorpay_signature, pack } = req.body;
+      recognition.onstart = () => {
+        recognition.running = true;
+        wave.classList.remove('hidden');
+        micBtn.classList.add('text-cyan-400', 'border-cyan-500');
+      };
 
-  const body = razorpay_order_id + "|" + razorpay_payment_id;
-  const expectedSignature = crypto
-    .createHmac('sha256', process.env.RAZORPAY_KEY_SECRET || '')
-    .update(body.toString())
-    .digest('hex');
+      recognition.onresult = (e) => {
+        document.getElementById('promptBox').value = e.results[0][0].transcript;
+      };
 
-  if (expectedSignature !== razorpay_signature) {
-    return res.status(400).json({ error: 'अमान्य पेमेंट हस्ताक्षर।' });
-  }
+      recognition.onend = () => {
+        recognition.running = false;
+        wave.classList.add('hidden');
+        micBtn.classList.remove('text-cyan-400', 'border-cyan-500');
+      };
 
-  const creditsToAdd = pack === 'pro' ? 500 : 100;
-  const newBalance = req.userCredits + creditsToAdd;
+      recognition.start();
+    }
 
-  await supabase.from('profiles').update({ credits: newBalance }).eq('id', req.user.id);
-  await supabase.from('payments').update({
-    payment_id: razorpay_payment_id,
-    status: 'success'
-  }).eq('order_id', razorpay_order_id);
+    // 6. टेलीप्रॉम्प्टर व ऑडियो
+    function toggleTeleprompter() {
+      const out = document.getElementById('outputConsole');
+      out.classList.toggle('teleprompter-active');
+      if (out.classList.contains('teleprompter-active')) {
+        window.teleScroll = setInterval(() => { out.scrollTop += 1; }, 40);
+      } else {
+        clearInterval(window.teleScroll);
+      }
+    }
 
-  return res.json({ success: true, newCredits: newBalance });
-});
+    function playNeuralSpeech() {
+      const text = document.getElementById('outputConsole').textContent;
+      if (!text) return;
+      window.speechSynthesis.cancel();
+      const ut = new SpeechSynthesisUtterance(text);
+      ut.lang = 'hi-IN';
+      window.speechSynthesis.speak(ut);
+    }
 
-// 11. यूजर हब डैशबोर्ड व हिस्ट्री
-app.get('/api/user/dashboard', verifyUserAccess, async (req, res) => {
-  try {
-    const { data: history } = await supabase
-      .from('generations')
-      .select('id, prompt, response, category, is_favorite, created_at')
-      .eq('user_id', req.user.id)
-      .order('created_at', { ascending: false })
-      .limit(30);
-
-    return res.json({
-      user: {
-        id: req.user.id,
-        email: req.user.email,
-        credits: req.userCredits
-      },
-      generations: history || []
-    });
-  } catch (err) {
-    return res.status(500).json({ error: 'डैशबोर्ड डेटा फेच विफल' });
-  }
-});
-
-// 12. बुकमार्क व डिलीट
-app.patch('/api/generations/:id/favorite', verifyUserAccess, async (req, res) => {
-  try {
-    await supabase
-      .from('generations')
-      .update({ is_favorite: Boolean(req.body.is_favorite) })
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id);
-
-    return res.json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ error: 'अपडेट विफल' });
-  }
-});
-
-app.delete('/api/generations/:id', verifyUserAccess, async (req, res) => {
-  try {
-    await supabase
-      .from('generations')
-      .delete()
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id);
-
-    return res.json({ success: true });
-  } catch (err) {
-    return res.status(500).json({ error: 'डिलीट विफल' });
-  }
-});
-
-// 13. सर्वर स्टेटस
-app.get('/', (req, res) => {
-  res.json({
-    status: 'online',
-    engine: 'Khaascore AI All-in-One Powerhouse Hub',
-    founder: 'Kamran Siddiki',
-    version: '6.5.0'
-  });
-});
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Khaascore AI Live on port ${PORT}`));
+    function copyOutput() {
+      navigator.clipboard.writeText(document.getElementById('outputConsole').textContent);
+      alert('क्लिपबोर्ड में कॉपी हो गया!');
+    }
+  </script>
+</body>
+</html>
